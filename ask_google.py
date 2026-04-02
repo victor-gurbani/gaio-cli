@@ -28,7 +28,7 @@ MAX_WAIT_S = 30
 CAPTCHA_WAIT_S = 45
 USER_DATA_DIR = "/tmp/pw_google_aio"
 
-console = Console()
+console = Console(stderr=True)
 
 USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -150,6 +150,115 @@ window.getAioState = function() {
 """
 
 
+
+class MarkdownStreamer:
+    def __init__(self, use_color=True):
+        self.use_color = use_color
+        self.bold_open = False
+        self.italic_open = False
+        self.header_open = False
+        self.is_start_of_line = True
+        self.buffer = ""
+        
+        self.BOLD = "\033[93m\033[1m"
+        self.ITALIC = "\033[92m\033[3m"
+        self.CYAN = "\033[96m"
+        self.MAGENTA = "\033[95m"
+        self.RESET = "\033[0m"
+
+    def _get_active_codes(self):
+        codes = ""
+        if self.header_open: codes += self.CYAN + self.BOLD
+        if self.bold_open: codes += self.BOLD
+        if self.italic_open: codes += self.ITALIC
+        return codes
+
+    def feed(self, text):
+        if not self.use_color:
+            sys.stdout.write(text)
+            sys.stdout.flush()
+            return
+
+        self.buffer += text
+        output = ""
+        i = 0
+        while i < len(self.buffer):
+            # Bold
+            if self.buffer.startswith("**", i):
+                if self.bold_open:
+                    output += self.RESET
+                    self.bold_open = False
+                    output += self._get_active_codes()
+                else:
+                    output += self.BOLD
+                    self.bold_open = True
+                self.is_start_of_line = False
+                i += 2
+                continue
+
+            # Wait if buffer ends with a single '*'
+            if self.buffer[i] == '*' and i == len(self.buffer) - 1:
+                break
+                
+            # Italic
+            if self.buffer[i] == '*':
+                if self.italic_open:
+                    output += self.RESET
+                    self.italic_open = False
+                    output += self._get_active_codes()
+                else:
+                    output += self.ITALIC
+                    self.italic_open = True
+                self.is_start_of_line = False
+                i += 1
+                continue
+
+            # Headers
+            if self.is_start_of_line and self.buffer.startswith("### ", i):
+                self.header_open = True
+                output += self.CYAN + self.BOLD + "■ "
+                self.is_start_of_line = False
+                i += 4
+                continue
+
+            # Bullet points
+            if self.is_start_of_line and self.buffer.startswith("- ", i):
+                output += self.MAGENTA + "● " + self.RESET + self._get_active_codes()
+                self.is_start_of_line = False
+                i += 2
+                continue
+
+            # Newline
+            if self.buffer[i] == '\n':
+                output += self.RESET
+                self.header_open = False
+                self.bold_open = False
+                self.italic_open = False
+                self.is_start_of_line = True
+                output += '\n'
+                i += 1
+                continue
+
+            # Regular char
+            output += self.buffer[i]
+            self.is_start_of_line = False
+            i += 1
+
+        self.buffer = self.buffer[i:]
+        if output:
+            sys.stdout.write(output)
+            sys.stdout.flush()
+
+    def finish(self):
+        if self.buffer:
+            if self.use_color:
+                sys.stdout.write(self.buffer)
+                sys.stdout.write(self.RESET)
+            else:
+                sys.stdout.write(self.buffer)
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+
 def build_url(query: str) -> str:
     return f"https://www.google.com/search?q={quote_plus(query)}&udm=50&aep=11"
 
@@ -250,8 +359,11 @@ def extract_aio(query: str, debug: bool = False):
                 )
                 return
 
-            console.print("[bold green]Google AI:[/bold green]\n")
-
+            is_tty = sys.stdout.isatty()
+            if is_tty:
+                console.print("[bold green]Google AI:[/bold green]\n")
+            
+            streamer = MarkdownStreamer(use_color=is_tty)
             prev_text = ""
             stable_count = 0
             first_text_at = time.monotonic()
@@ -263,7 +375,7 @@ def extract_aio(query: str, debug: bool = False):
 
                 if current_text and current_text != prev_text:
                     delta = current_text[len(prev_text) :]
-                    console.print(delta, end="")
+                    streamer.feed(delta)
                     prev_text = current_text
                     stable_count = 0
                 elif current_text:
@@ -277,7 +389,7 @@ def extract_aio(query: str, debug: bool = False):
 
                 time.sleep(POLL_MS / 1000)
 
-            console.print("\n")
+            streamer.finish()
 
             if debug:
                 elapsed = time.monotonic() - t0
@@ -296,16 +408,47 @@ def extract_aio(query: str, debug: bool = False):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Ask Google AI via CLI")
-    parser.add_argument("query", nargs="+", help="The question to ask")
+    parser.add_argument("query", nargs="*", help="The question to ask")
+    parser.add_argument("-p", "--prompt", type=str, default="", help="Prompt to prepend to the piped input")
     parser.add_argument(
         "--debug", action="store_true", help="Show debug stats at the end"
     )
 
     args = parser.parse_args()
-    query = " ".join(args.query)
+    
+    piped_input = ""
+    if not sys.stdin.isatty():
+        piped_input = sys.stdin.read().strip()
+        
+    query_parts = []
+    if args.prompt:
+        query_parts.append(args.prompt.strip())
+    
+    args_query = " ".join(args.query).strip()
+    if args_query:
+        query_parts.append(args_query)
+        
+    if piped_input:
+        query_parts.append(f"\n'''\n{piped_input}\n'''")
+        
+    final_query = "\n\n".join(query_parts).strip()
+    
+    if not final_query:
+        try:
+            console.print("[bold yellow]Enter your query for Google AI:[/bold yellow]")
+            sys.stderr.write("> ")
+            sys.stderr.flush()
+            final_query = input().strip()
+        except (KeyboardInterrupt, EOFError):
+            console.print("\n[bold red]Canceled by user.[/bold red]")
+            sys.exit(0)
+            
+    if not final_query:
+        console.print("[bold red]No query provided. Exiting.[/bold red]")
+        sys.exit(1)
 
     try:
-        extract_aio(query, debug=args.debug)
+        extract_aio(final_query, debug=args.debug)
     except KeyboardInterrupt:
         console.print("\n[bold red]Canceled by user.[/bold red]")
         sys.exit(0)
