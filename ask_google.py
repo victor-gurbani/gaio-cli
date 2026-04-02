@@ -167,8 +167,9 @@ class MarkdownStreamer:
         self.RESET = "\033[0m"
 
     def _get_active_codes(self):
+        if self.header_open:
+            return self.CYAN + "\033[1m"
         codes = ""
-        if self.header_open: codes += self.CYAN + self.BOLD
         if self.bold_open: codes += self.BOLD
         if self.italic_open: codes += self.ITALIC
         return codes
@@ -186,12 +187,12 @@ class MarkdownStreamer:
             # Bold
             if self.buffer.startswith("**", i):
                 if self.bold_open:
-                    output += self.RESET
                     self.bold_open = False
-                    output += self._get_active_codes()
+                    output += self.RESET + self._get_active_codes()
                 else:
-                    output += self.BOLD
                     self.bold_open = True
+                    if not self.header_open:
+                        output += self.BOLD
                 self.is_start_of_line = False
                 i += 2
                 continue
@@ -203,12 +204,12 @@ class MarkdownStreamer:
             # Italic
             if self.buffer[i] == '*':
                 if self.italic_open:
-                    output += self.RESET
                     self.italic_open = False
-                    output += self._get_active_codes()
+                    output += self.RESET + self._get_active_codes()
                 else:
-                    output += self.ITALIC
                     self.italic_open = True
+                    if not self.header_open:
+                        output += self.ITALIC
                 self.is_start_of_line = False
                 i += 1
                 continue
@@ -216,7 +217,7 @@ class MarkdownStreamer:
             # Headers
             if self.is_start_of_line and self.buffer.startswith("### ", i):
                 self.header_open = True
-                output += self.CYAN + self.BOLD + "■ "
+                output += self.CYAN + "\033[1m" + "■ "
                 self.is_start_of_line = False
                 i += 4
                 continue
@@ -360,9 +361,6 @@ def extract_aio(query: str, debug: bool = False):
                 return
 
             is_tty = sys.stdout.isatty()
-            if is_tty:
-                console.print("[bold green]Google AI:[/bold green]\n")
-            
             streamer = MarkdownStreamer(use_color=is_tty)
             prev_text = ""
             stable_count = 0
