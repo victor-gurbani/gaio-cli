@@ -292,7 +292,7 @@ def _dismiss_cookie_consent(page):
             continue
 
 
-def extract_aio(query: str, debug: bool = False):
+def extract_aio(query: str, display_query: str = None, debug: bool = False):
     url = build_url(query)
     stealth = Stealth()
 
@@ -313,8 +313,11 @@ def extract_aio(query: str, debug: bool = False):
             page = ctx.pages[0] if ctx.pages else ctx.new_page()
             page.add_init_script(_AIO_INIT_SCRIPT)
 
+            display_text = display_query if display_query else query
+            if len(display_text) > 100:
+                display_text = display_text[:97] + "..."
             with console.status(
-                f"[bold cyan]Asking Google AI: [white]'{query}'[bold cyan]...",
+                f"[bold cyan]Asking Google AI: [white]'{display_text}'[bold cyan]...",
                 spinner="dots",
             ):
                 t0 = time.monotonic()
@@ -426,10 +429,18 @@ if __name__ == "__main__":
     if args_query:
         query_parts.append(args_query)
         
+    display_parts = []
+    if args.prompt:
+        display_parts.append(args.prompt.strip())
+    if args_query:
+        display_parts.append(args_query)
+
     if piped_input:
         query_parts.append(f"\n'''\n{piped_input}\n'''")
+        display_parts.append("[PIPED CONTENT]")
         
     final_query = "\n\n".join(query_parts).strip()
+    display_query = " ".join(display_parts).strip()
     
     if not final_query:
         try:
@@ -437,6 +448,7 @@ if __name__ == "__main__":
             sys.stderr.write("> ")
             sys.stderr.flush()
             final_query = input().strip()
+            display_query = final_query
         except (KeyboardInterrupt, EOFError):
             console.print("\n[bold red]Canceled by user.[/bold red]")
             sys.exit(0)
@@ -446,7 +458,7 @@ if __name__ == "__main__":
         sys.exit(1)
 
     try:
-        extract_aio(final_query, debug=args.debug)
+        extract_aio(final_query, display_query=display_query, debug=args.debug)
     except KeyboardInterrupt:
         console.print("\n[bold red]Canceled by user.[/bold red]")
         sys.exit(0)
