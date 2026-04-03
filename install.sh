@@ -2,11 +2,11 @@
 
 set -e
 
-echo "🚀 Installing FastAI CLI (Google AI Overview)..."
+echo "🚀 Installing GAIO CLI (Google AI Overview)..."
 
-INSTALL_DIR="$HOME/.local/share/fastai-cli"
+INSTALL_DIR="$HOME/.local/share/gaio-cli"
 BIN_DIR="$HOME/.local/bin"
-REPO_URL="https://raw.githubusercontent.com/YOUR_USERNAME/fastai-cli/main/ask_google.py" 
+REPO_URL="https://raw.githubusercontent.com/victor-gurbani/gaio-cli/main/ask_google.py" 
 
 if ! command -v python3 &> /dev/null; then
     echo "❌ Error: python3 is required but not installed."
@@ -33,17 +33,17 @@ else
     curl -sSL "$REPO_URL" -o "$INSTALL_DIR/ask_google.py"
 fi
 
-echo "🔗 Creating symlink in $BIN_DIR/fastai..."
-cat << 'EOF' > "$BIN_DIR/fastai"
+echo "🔗 Creating symlink in $BIN_DIR/gaio..."
+cat << 'EOF' > "$BIN_DIR/gaio"
 #!/usr/bin/env bash
-exec "$HOME/.local/share/fastai-cli/venv/bin/python" "$HOME/.local/share/fastai-cli/ask_google.py" "$@"
+exec "$HOME/.local/share/gaio-cli/venv/bin/python" "$HOME/.local/share/gaio-cli/ask_google.py" "$@"
 EOF
 
-chmod +x "$BIN_DIR/fastai"
+chmod +x "$BIN_DIR/gaio"
 
 echo "✅ Installation complete!"
 echo ""
-echo "You can now use the command: fastai"
+echo "You can now use the command: gaio"
 echo ""
 
 if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then

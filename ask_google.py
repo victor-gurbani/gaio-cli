@@ -5,7 +5,7 @@ Sends inquiries to Google and streams the AI-generated response back to the term
 Returns clean markdown output from Google's AI Overview.
 
 Usage:
-  python ask_google.py "what happened yesterday?"
+  gaio "what happened yesterday?"
 """
 
 import sys
@@ -408,7 +408,7 @@ def extract_aio(query: str, display_query: str = None, debug: bool = False):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Ask Google AI via CLI")
+    parser = argparse.ArgumentParser(prog="gaio", description="Ask Google AI via CLI")
     parser.add_argument("query", nargs="*", help="The question to ask")
     parser.add_argument("-p", "--prompt", type=str, default="", help="Prompt to prepend to the piped input")
     parser.add_argument(
