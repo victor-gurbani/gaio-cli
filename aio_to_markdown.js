@@ -68,6 +68,29 @@ function aioToMarkdown(containerNode) {
 
     const tag = node.tagName;
 
+    if (tag === 'DIV' && node.classList.contains('pHpOfb')) {
+      const langEl = node.querySelector('.vVRw1d');
+      const lang = langEl ? langEl.textContent.trim() : '';
+      const preEl = node.querySelector('pre');
+      const code = preEl ? preEl.textContent : '';
+      if (code) {
+        return '
+```' + lang + '
+' + code.replace(/
+$/, '') + '
+```
+';
+      }
+    }
+    if (tag === 'PRE') {
+      return '
+```
+' + node.textContent.replace(/
+$/, '') + '
+```
+';
+    }
+
     if (tag === 'STRONG') {
       const inner = walkChildren(node).trim();
       return inner ? `**${inner}**` : '';
