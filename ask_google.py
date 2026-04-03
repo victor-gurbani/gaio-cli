@@ -15,6 +15,7 @@ from urllib.parse import quote_plus
 
 try:
     from rich.console import Console
+    from rich.syntax import Syntax
     from playwright.sync_api import sync_playwright
     from playwright_stealth import Stealth
 except ImportError:
@@ -50,7 +51,7 @@ CHROME_ARGS = [
 _AIO_INIT_SCRIPT = """
 window.getAioState = function() {
     const SKIP_CLASSES = new Set([
-        'uJ19be', 'txxDge', 'Fsg96', 'Jd31eb', 'DBd2Wb',
+        'uJ19be', 'txxDge', 'Fsg96', 'Jd31eb', 'DBd2Wb', 'LIBz9e', 'P8PNlb',
     ]);
     const SKIP_TAGS = new Set([
         'BUTTON', 'SVG', 'IMG', 'STYLE', 'SCRIPT', 'NOSCRIPT',
@@ -74,6 +75,42 @@ window.getAioState = function() {
         if (shouldSkip(node)) return '';
 
         const tag = node.tagName;
+
+
+        if (tag === 'TABLE') {
+            let md = '\\n';
+            const rows = Array.from(node.querySelectorAll('tr'));
+            if (rows.length === 0) return '';
+            
+            rows.forEach((row, rIdx) => {
+                let rowMd = '|';
+                const cells = Array.from(row.querySelectorAll('th, td'));
+                cells.forEach(cell => {
+                    const text = walkChildren(cell).replace(/\\n/g, ' ').trim();
+                    rowMd += ' ' + text + ' |';
+                });
+                md += rowMd + '\\n';
+                if (rIdx === 0) {
+                    let sep = '|';
+                    cells.forEach(() => sep += ' --- |');
+                    md += sep + '\\n';
+                }
+            });
+            return md + '\\n';
+        }
+        if (tag === 'DIV' && node.classList.contains('pHpOfb')) {
+
+            const langEl = node.querySelector('.vVRw1d');
+            const lang = langEl ? langEl.textContent.trim() : '';
+            const preEl = node.querySelector('pre');
+            const code = preEl ? preEl.textContent : '';
+            if (code) {
+                return '\\n```' + lang + '\\n' + code.replace(/\\n$/, '') + '\\n```\\n';
+            }
+        }
+        if (tag === 'PRE') {
+            return '\\n```\\n' + node.textContent.replace(/\\n$/, '') + '\\n```\\n';
+        }
 
         if (tag === 'STRONG') {
             const inner = walkChildren(node).trim();
@@ -159,6 +196,13 @@ class MarkdownStreamer:
         self.header_open = False
         self.is_start_of_line = True
         self.buffer = ""
+        self.in_code_block = False
+        self.code_buffer = ""
+        self.code_lang = ""
+        self.in_table_block = False
+        self.table_buffer = ""
+        self.console = Console(stderr=False)
+
         
         self.BOLD = "\033[93m\033[1m"
         self.ITALIC = "\033[92m\033[3m"
@@ -184,6 +228,34 @@ class MarkdownStreamer:
         output = ""
         i = 0
         while i < len(self.buffer):
+            # Table block end
+            if self.in_table_block and self.is_start_of_line and not self.buffer.startswith("|", i):
+                self.in_table_block = False
+                sys.stdout.write(output)
+                sys.stdout.flush()
+                output = ""
+                from rich.markdown import Markdown
+                self.console.print(Markdown(self.table_buffer.strip()))
+                self.table_buffer = ""
+                
+            # Table block start/continue
+            if self.is_start_of_line and self.buffer.startswith("|", i):
+                if not self.in_table_block:
+                    self.in_table_block = True
+                    self.table_buffer = ""
+                    sys.stdout.write(output)
+                    sys.stdout.flush()
+                    output = ""
+                
+                newline_idx = self.buffer.find('\n', i)
+                if newline_idx != -1:
+                    self.table_buffer += self.buffer[i:newline_idx+1]
+                    i = newline_idx + 1
+                    self.is_start_of_line = True
+                    continue
+                else:
+                    break
+
             # Bold
             if self.buffer.startswith("**", i):
                 if self.bold_open:
@@ -222,6 +294,52 @@ class MarkdownStreamer:
                 i += 4
                 continue
 
+
+            # Code blocks
+            if self.buffer.startswith("```", i):
+                if not self.in_code_block:
+                    self.in_code_block = True
+                    self.code_buffer = ""
+                    # flush current output
+                    sys.stdout.write(output)
+                    sys.stdout.flush()
+                    output = ""
+                    i += 3
+                    
+                    # extract language if any
+                    newline_idx = self.buffer.find('\n', i)
+                    if newline_idx != -1:
+                        self.code_lang = self.buffer[i:newline_idx].strip()
+                        i = newline_idx + 1
+                    else:
+                        # not enough buffer to see newline yet, wait
+                        self.in_code_block = False # rollback
+                        break
+                    continue
+                else:
+                    self.in_code_block = False
+                    # render code buffer
+                    sys.stdout.write(output)
+                    sys.stdout.flush()
+                    output = ""
+                    
+                    if self.code_lang:
+                        syntax = Syntax(self.code_buffer.strip(), self.code_lang, theme="monokai", background_color="default", word_wrap=True)
+                    else:
+                        syntax = Syntax(self.code_buffer.strip(), "text", theme="monokai", background_color="default", word_wrap=True)
+                    self.console.print(syntax)
+                    
+                    self.code_buffer = ""
+                    self.code_lang = ""
+                    self.is_start_of_line = True
+                    i += 3
+                    continue
+
+            if self.in_code_block:
+                self.code_buffer += self.buffer[i]
+                i += 1
+                continue
+
             # Bullet points
             if self.is_start_of_line and self.buffer.startswith("- ", i):
                 output += self.MAGENTA + "● " + self.RESET + self._get_active_codes()
@@ -251,6 +369,10 @@ class MarkdownStreamer:
             sys.stdout.flush()
 
     def finish(self):
+        if self.in_table_block and self.table_buffer:
+            from rich.markdown import Markdown
+            self.console.print(Markdown(self.table_buffer.strip()))
+            self.table_buffer = ""
         if self.buffer:
             if self.use_color:
                 sys.stdout.write(self.buffer)
@@ -265,7 +387,15 @@ def build_url(query: str) -> str:
 
 
 def _get_aio_state(page) -> dict:
-    return page.evaluate("() => window.getAioState()")
+    state = page.evaluate("() => window.getAioState()")
+    if state and state.get("complete"):
+        try:
+            html = page.evaluate("() => document.body.innerHTML")
+            with open("/tmp/full_aio.html", "w", encoding="utf-8") as fd:
+                fd.write(html)
+        except:
+            pass
+    return state
 
 
 def _has_captcha(page) -> bool:
