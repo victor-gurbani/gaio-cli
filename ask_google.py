@@ -10,6 +10,7 @@ Usage:
 
 import sys
 import time
+import re
 import argparse
 from urllib.parse import quote_plus
 
@@ -201,7 +202,7 @@ class MarkdownStreamer:
         self.code_lang = ""
         self.in_table_block = False
         self.table_buffer = ""
-        self.console = Console(stderr=False)
+        self.console = Console(stderr=False, force_terminal=True, color_system='auto')
 
         
         self.BOLD = "\033[93m\033[1m"
@@ -218,6 +219,50 @@ class MarkdownStreamer:
         if self.italic_open: codes += self.ITALIC
         return codes
 
+    def _animated_write(self, text):
+        if not self.use_color or not text:
+            sys.stdout.write(text)
+            sys.stdout.flush()
+            return
+
+        ansi_escape = re.compile(r'(\[[0-9;]*[a-zA-Z])')
+        tokens = ansi_escape.split(text)
+        
+        visible_count = sum(len(t) for t in tokens if not t.startswith('\x1b'))
+        if visible_count == 0:
+            sys.stdout.write(text)
+            sys.stdout.flush()
+            return
+            
+        delay = min(0.1 / visible_count, 0.015)
+        chunk_size = max(1, int(0.002 / delay)) if delay > 0 else 1
+        actual_delay = delay * chunk_size
+
+        char_buffer = ""
+        for token in tokens:
+            if not token: continue
+            if token.startswith('\x1b'):
+                if char_buffer:
+                    sys.stdout.write(char_buffer)
+                    sys.stdout.flush()
+                    time.sleep(actual_delay)
+                    char_buffer = ""
+                sys.stdout.write(token)
+            else:
+                for char in token:
+                    char_buffer += char
+                    if len(char_buffer) >= chunk_size:
+                        sys.stdout.write(char_buffer)
+                        sys.stdout.flush()
+                        time.sleep(actual_delay)
+                        char_buffer = ""
+        
+        if char_buffer:
+            sys.stdout.write(char_buffer)
+            sys.stdout.flush()
+            if actual_delay > 0:
+                time.sleep(actual_delay)
+
     def feed(self, text):
         if not self.use_color:
             sys.stdout.write(text)
@@ -231,11 +276,12 @@ class MarkdownStreamer:
             # Table block end
             if self.in_table_block and self.is_start_of_line and not self.buffer.startswith("|", i):
                 self.in_table_block = False
-                sys.stdout.write(output)
-                sys.stdout.flush()
+                self._animated_write(output)
                 output = ""
                 from rich.markdown import Markdown
-                self.console.print(Markdown(self.table_buffer.strip()))
+                with self.console.capture() as cap:
+                    self.console.print(Markdown(self.table_buffer.strip()))
+                self._animated_write(cap.get())
                 self.table_buffer = ""
                 
             # Table block start/continue
@@ -243,8 +289,7 @@ class MarkdownStreamer:
                 if not self.in_table_block:
                     self.in_table_block = True
                     self.table_buffer = ""
-                    sys.stdout.write(output)
-                    sys.stdout.flush()
+                    self._animated_write(output)
                     output = ""
                 
                 newline_idx = self.buffer.find('\n', i)
@@ -301,8 +346,7 @@ class MarkdownStreamer:
                     self.in_code_block = True
                     self.code_buffer = ""
                     # flush current output
-                    sys.stdout.write(output)
-                    sys.stdout.flush()
+                    self._animated_write(output)
                     output = ""
                     i += 3
                     
@@ -319,15 +363,16 @@ class MarkdownStreamer:
                 else:
                     self.in_code_block = False
                     # render code buffer
-                    sys.stdout.write(output)
-                    sys.stdout.flush()
+                    self._animated_write(output)
                     output = ""
                     
                     if self.code_lang:
                         syntax = Syntax(self.code_buffer.strip(), self.code_lang, theme="monokai", background_color="default", word_wrap=True)
                     else:
                         syntax = Syntax(self.code_buffer.strip(), "text", theme="monokai", background_color="default", word_wrap=True)
-                    self.console.print(syntax)
+                    with self.console.capture() as cap:
+                        self.console.print(syntax)
+                    self._animated_write(cap.get())
                     
                     self.code_buffer = ""
                     self.code_lang = ""
@@ -365,20 +410,20 @@ class MarkdownStreamer:
 
         self.buffer = self.buffer[i:]
         if output:
-            sys.stdout.write(output)
-            sys.stdout.flush()
+            self._animated_write(output)
 
     def finish(self):
         if self.in_table_block and self.table_buffer:
             from rich.markdown import Markdown
-            self.console.print(Markdown(self.table_buffer.strip()))
+            with self.console.capture() as cap:
+                self.console.print(Markdown(self.table_buffer.strip()))
+            self._animated_write(cap.get())
             self.table_buffer = ""
         if self.buffer:
             if self.use_color:
-                sys.stdout.write(self.buffer)
-                sys.stdout.write(self.RESET)
+                self._animated_write(self.buffer + self.RESET)
             else:
-                sys.stdout.write(self.buffer)
+                self._animated_write(self.buffer)
         sys.stdout.write("\n")
         sys.stdout.flush()
 
@@ -387,15 +432,7 @@ def build_url(query: str) -> str:
 
 
 def _get_aio_state(page) -> dict:
-    state = page.evaluate("() => window.getAioState()")
-    if state and state.get("complete"):
-        try:
-            html = page.evaluate("() => document.body.innerHTML")
-            with open("/tmp/full_aio.html", "w", encoding="utf-8") as fd:
-                fd.write(html)
-        except:
-            pass
-    return state
+    return page.evaluate("() => window.getAioState()")
 
 
 def _has_captcha(page) -> bool:
